@@ -1,4 +1,5 @@
-
+use rmp::encode;
+use std;
 use std::io;
 
 #[derive(Debug)]
@@ -12,6 +13,7 @@ pub enum Error {
     /// Found a invalid armor header.
     InvalidArmorHeader,
     IOError(io::Error),
+    CryptoError,
 }
 
 impl From<io::Error> for Error {
@@ -19,3 +21,11 @@ impl From<io::Error> for Error {
         Error::IOError(err)
     }
 }
+
+impl From<encode::ValueWriteError> for Error {
+    fn from(_: encode::ValueWriteError) -> Error {
+        Error::CryptoError
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;

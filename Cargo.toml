@@ -5,8 +5,10 @@ authors = ["Chu Ka-cheong <kcchu@users.noreply.github.com>"]
 
 [dependencies]
 bigint = "4.2.0"
+libsodium-sys = "0.0.15"
+rand = "0.3.17"
 rmp = "0.8.7"
 sodiumoxide = "0.0.15"
 
 [dev-dependencies]
-rand = "0.3.17"
+rustc-serialize="0.3.19"

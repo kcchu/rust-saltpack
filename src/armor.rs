@@ -1,5 +1,5 @@
 use bigint::uint::U256;
-use error::Error;
+use error::{Error, Result};
 use std::cmp;
 use std::io;
 use std::io::{Read, Write};
@@ -36,8 +36,6 @@ pub static BASE62: &'static BaseXEncoding = &BaseXEncoding {
 //     shift: true,
 // };
 
-type ArmorResult<T> = Result<T, Error>;
-
 /// Armor a byte slice using Saltpack ASCII Armor Format and write the result to io::Write.
 ///
 /// # Examples
@@ -54,7 +52,7 @@ pub fn armor<W>(encoding: &BaseXEncoding,
                 src: &[u8],
                 out: &mut W,
                 message_type: &str)
-                -> ArmorResult<usize>
+                -> Result<usize>
     where W: io::Write
 {
     let header = b"BEGIN SALTPACK ";
@@ -82,7 +80,7 @@ pub fn armor<W>(encoding: &BaseXEncoding,
 /// assert!(result.is_ok(), "{:?}", result);
 /// assert_eq!(&String::from_utf8_lossy(&buffer[..result.unwrap()]), "TEST");
 /// ```
-pub fn dearmor<R>(encoding: &BaseXEncoding, src: &mut R, out: &mut [u8]) -> ArmorResult<usize>
+pub fn dearmor<R>(encoding: &BaseXEncoding, src: &mut R, out: &mut [u8]) -> Result<usize>
     where R: io::Read
 {
     let mut stream = src.bytes().skip_while(|r| match *r {
@@ -112,7 +110,7 @@ pub struct BaseXEncoding {
 }
 
 impl BaseXEncoding {
-    fn encode<W>(&self, src: &[u8], out: &mut W) -> ArmorResult<usize>
+    fn encode<W>(&self, src: &[u8], out: &mut W) -> Result<usize>
         where W: io::Write
     {
         let mut written = 0;
@@ -157,7 +155,7 @@ impl BaseXEncoding {
         Ok(written)
     }
 
-    fn encode_block(&self, src: &[u8], out: &mut [u8]) -> ArmorResult<usize> {
+    fn encode_block(&self, src: &[u8], out: &mut [u8]) -> Result<usize> {
         let clen = self.min_chars_size(src.len());
         // encode() should allocate enough space. This should not happen.
         assert!(out.len() >= clen, "Output buffer too small");
@@ -178,7 +176,7 @@ impl BaseXEncoding {
         Ok(clen)
     }
 
-    fn decode<T>(&self, src: T, out: &mut [u8]) -> ArmorResult<usize>
+    fn decode<T>(&self, src: T, out: &mut [u8]) -> Result<usize>
         where T: Iterator<Item = io::Result<u8>>
     {
         let filter_chars = [b'>', b'\n', b'\r', b'\t', b' '];
@@ -207,7 +205,7 @@ impl BaseXEncoding {
         Ok(written)
     }
 
-    fn decode_block(&self, src: &[u8], out: &mut [u8]) -> ArmorResult<usize> {
+    fn decode_block(&self, src: &[u8], out: &mut [u8]) -> Result<usize> {
         let blen = self.max_bytes_size(src.len());
         let expected_char_size = self.min_chars_size(blen);
         if src.len() != expected_char_size {
@@ -253,9 +251,7 @@ impl BaseXEncoding {
 
 #[cfg(test)]
 mod tests {
-    extern crate rand;
-
-    use self::rand::{thread_rng, Rng};
+    use rand::{thread_rng, Rng};
     use super::*;
 
     #[test]
@@ -312,11 +308,13 @@ mod tests {
         let result;
         {
             let bytes = "BEGIN SALTPACK MESSAGE. 9
-            >U\tq\rn\n\rH      xdP9xMg626. END SALTPACK MESSAGE.".as_bytes();
+            >U\tq\rn\n\rH      xdP9xMg626. END SALTPACK MESSAGE."
+                .as_bytes();
             result = dearmor(BASE62, &mut &bytes[..], &mut &mut buf[..]);
         }
         assert!(result.is_ok());
-        assert_eq!("and sorry \n", &String::from_utf8_lossy(&buf[..result.unwrap()]));
+        assert_eq!("and sorry \n",
+                   &String::from_utf8_lossy(&buf[..result.unwrap()]));
     }
 
     #[test]
