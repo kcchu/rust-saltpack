@@ -1,6 +1,7 @@
-use std::mem;
+use libc::c_ulonglong;
 use libsodium_sys::{crypto_hash_sha512_state, crypto_hash_sha512_init, crypto_hash_sha512_update,
                     crypto_hash_sha512_final};
+use std::mem;
 
 pub const SHA512_HASH_LEN: usize = 64;
 
@@ -21,18 +22,18 @@ impl Hash for SHA512 {
         context.update(data);
         context.finish()
     }
+    
     fn new() -> Self {
         unsafe {
-            let mut context: SHA512 = mem::uninitialized();
-            crypto_hash_sha512_init(&mut context.0);
-            context
+            let mut st: crypto_hash_sha512_state = mem::uninitialized();
+            crypto_hash_sha512_init(&mut st);
+            SHA512(st)
         }
     }
 
     fn update(&mut self, data: &[u8]) {
-        let mlen: u64 = data.len() as u64;
         unsafe {
-            crypto_hash_sha512_update(&mut self.0, data.as_ptr(), mlen);
+            crypto_hash_sha512_update(&mut self.0, data.as_ptr(), data.len() as c_ulonglong);
         }
     }
 
