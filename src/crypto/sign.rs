@@ -24,6 +24,7 @@ pub mod ed25519 {
     use sodiumoxide::crypto::sign as crypto_sign;
     use super::*;
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PublicKey(crypto_sign::PublicKey);
 
     /// An Ed25519 public key.
@@ -60,6 +61,7 @@ pub mod ed25519 {
     }
 
     /// An Ed25519 private key.
+    #[derive(Clone, Eq, PartialEq)]
     pub struct PrivateKey {
         pk: PublicKey,
         sk: crypto_sign::SecretKey,
@@ -95,6 +97,7 @@ pub mod ed25519 {
     }
 
     /// An Ed25519 signature output.
+    #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct Signature(crypto_sign::Signature);
 
     impl Signature {

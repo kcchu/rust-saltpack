@@ -208,7 +208,6 @@ mod tests {
         println!("Result: {}", String::from_utf8_lossy(&cursor.get_ref()[..clen]));
     }
 
-
     #[test]
     fn sign_then_verify() {
         let msg = b"The quick brown fox jumps over the lazy dog";
@@ -226,5 +225,29 @@ mod tests {
         let mut signature_bytes = &buf[..blen];
         let result = verify_detached(msg, &mut signature_bytes);
         assert!(result.is_ok(), "{:?}", result.err());
+        assert_eq!(&result.unwrap(), sk.public_key());
+    }
+
+    #[test]
+    fn sign_then_verify_fail() {
+        let msg = b"The quick brown fox jumps over the lazy dog";
+        let mut rng = rand::os::OsRng::new().unwrap();
+        let sk = ed25519::PrivateKey::generate_random_key(&mut rng).unwrap();
+
+        let mut buf = [0u8; 4096];
+        let blen;
+        {
+            let mut cursor = io::Cursor::new(&mut buf[..]);
+            let result = sign_detached(msg, &sk, &mut cursor, &mut rng);
+            assert!(result.is_ok());
+            blen = cursor.position() as usize;
+        }
+        let mut signature_bytes = &buf[..blen];
+        let result = verify_detached(&msg[..5], &mut signature_bytes);
+        match result {
+            Ok(_) => assert!(false, "should not verify"),
+            Err(Error::Unspecified) => (),
+            Err(_) => assert!(false, "unexpected error"),
+        }
     }
 }
