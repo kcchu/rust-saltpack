@@ -72,6 +72,10 @@ where W: io::Write
         Ok(())
     }
 
+    pub fn get_ref(&self) -> &W {
+        self.inner
+    }
+
     fn write_header(&mut self) -> Result<()> {
         let header = b"BEGIN SALTPACK ";
         self.inner.write_all(header)?;
@@ -379,14 +383,11 @@ mod tests {
         let mut dst = [0u8; 1024];
         for i in 0..128 {
             thread_rng().fill_bytes(&mut src[..i]);
-            let clen;
-            {
-                let mut cursor = io::Cursor::new(&mut armored[..]);
-                let result = armor(BASE62, &mut &src[..i], &mut cursor, "MESSAGE");
-                assert!(result.is_ok());
-                clen = cursor.position() as usize;
-            }
-            let result = dearmor(BASE62, &mut &armored[..clen], &mut &mut dst[..]);
+            let mut cursor = io::Cursor::new(&mut armored[..]);
+            let result = armor(BASE62, &mut &src[..i], &mut cursor, "MESSAGE");
+            assert!(result.is_ok());
+            let clen = cursor.position() as usize;
+            let result = dearmor(BASE62, &mut &cursor.get_ref()[..clen], &mut &mut dst[..]);
             assert!(result.is_ok());
             let blen = result.unwrap();
             assert_eq!(i, blen);
@@ -401,24 +402,18 @@ mod tests {
                 #[test]
                 fn test_armor() {
                     let mut buf = [0u8; 4096];
-                    let clen;
-                    {
-                        let mut reader = &$input[..];
-                        let mut cursor = io::Cursor::new(&mut buf[..]);
-                        let result = armor(BASE62, &mut reader, &mut cursor, "MESSAGE");
-                        assert!(result.is_ok());
-                        clen = cursor.position() as usize;
-                    }
-                    assert_eq!(&String::from_utf8_lossy(&buf[..clen]), &$output);
+                    let mut reader = &$input[..];
+                    let mut cursor = io::Cursor::new(&mut buf[..]);
+                    let result = armor(BASE62, &mut reader, &mut cursor, "MESSAGE");
+                    assert!(result.is_ok());
+                    let clen = cursor.position() as usize;
+                    assert_eq!(&String::from_utf8_lossy(&cursor.get_ref()[..clen]), &$output);
                 }
                 #[test]
                 fn test_dearmor() {
                     let mut buf = [0u8; 4096];
-                    let result;
-                    {
-                        let mut reader = &$output.as_bytes()[..];
-                        result = dearmor(BASE62, &mut reader, &mut buf);
-                    }
+                    let mut reader = &$output.as_bytes()[..];
+                    let result = dearmor(BASE62, &mut reader, &mut buf);
                     assert!(result.is_ok(), "{:?}", result);
                     assert_eq!(&String::from_utf8_lossy(&buf[..result.unwrap()]),
                                &String::from_utf8_lossy($input));
