@@ -31,7 +31,7 @@ pub mod ed25519 {
         pub fn from_bytes(bytes: &[u8]) -> Result<PublicKey> {
             match crypto_sign::PublicKey::from_slice(bytes) {
                 Some(pk) => Ok(PublicKey(pk)),
-                None => Err(Error::CryptoError),
+                None => Err(Error::Crypto),
             }
         }
     }
@@ -42,7 +42,7 @@ pub mod ed25519 {
             if crypto_sign::verify_detached(&signature.0, data, &self.0) {
                 Ok(())
             } else {
-                Err(Error::CryptoError)
+                Err(Error::Crypto)
             }
         }
     }
@@ -101,7 +101,7 @@ pub mod ed25519 {
         pub fn from_bytes(bytes: &[u8]) -> Result<Signature> {
             match crypto_sign::Signature::from_slice(bytes) {
                 Some(sig) => Ok(Signature(sig)),
-                None => Err(Error::CryptoError),
+                None => Err(Error::Crypto),
             }
         }
     }
@@ -157,7 +157,7 @@ mod tests {
         assert!(result.is_err());
         match result {
             Ok(_) => assert!(false, "should not verify"),
-            Err(Error::CryptoError) => (),
+            Err(Error::Crypto) => (),
             Err(_) => assert!(false, "unexpected error"),
         }
     }

@@ -10,7 +10,7 @@ const MAX_ARMORED_BLOCK_SIZE: usize = 43;
 
 const WORD_LENGTH: usize = 15;
 
-const SENTENCE_LENGTH: usize = 200;
+const SENTENCE_LENGTH: usize = 15 * 200;
 
 const BASE62_CHARS: &'static [u8] = b"0123456789\
                                     ABCDEFGHIJKLMNOPQRSTUVWXYZ\
@@ -36,36 +36,136 @@ pub static BASE62: &'static BaseXEncoding = &BaseXEncoding {
 //     shift: true,
 // };
 
+pub struct ArmorWriter<'a, W: 'a>
+where W: io::Write
+{
+    encoding: &'a BaseXEncoding,
+    inner: &'a mut W,
+    message_type: &'a str,
+    buffer: [u8; MAX_BLOCK_SIZE],
+    tail: usize,
+    bytes_count: usize,
+}
+
+impl<'a, W> ArmorWriter<'a, W>
+where W: io::Write
+{
+    pub fn new(encoding: &'a BaseXEncoding, inner: &'a mut W, message_type: &'a str) -> Result<ArmorWriter<'a, W>> {
+        let mut wr = ArmorWriter {
+            encoding: encoding,
+            inner: inner,
+            message_type: message_type,
+            buffer: [0u8; MAX_BLOCK_SIZE],
+            tail: 0,
+            bytes_count: 0,
+        };
+        wr.write_header()?;
+        Ok(wr)
+    }
+
+    pub fn finish(mut self) -> Result<()> {
+        if self.tail > 0 {
+            self.consume_block()?;
+        }
+        self.write_footer()?;
+        self.flush()?;
+        Ok(())
+    }
+
+    fn write_header(&mut self) -> Result<()> {
+        let header = b"BEGIN SALTPACK ";
+        self.inner.write_all(header)?;
+        self.inner.write_all(self.message_type.as_bytes())?;
+        self.inner.write_all(b". ")?;
+        Ok(())
+    }
+
+    fn write_footer(&mut self) -> Result<()> {
+        let footer = b". END SALTPACK ";
+        self.inner.write_all(footer)?;
+        self.inner.write_all(self.message_type.as_bytes())?;
+        self.inner.write_all(b".")?;
+        Ok(())
+    }
+
+    fn write_buffer(&mut self, buf: &[u8]) -> Result<()> {
+        let rem = cmp::min(buf.len(), self.buffer.len() - self.tail);
+        self.buffer[self.tail..self.tail + rem].copy_from_slice(&buf[..rem]);
+        self.tail += rem;
+        if self.tail == self.encoding.block_size {
+            self.consume_block()?;
+        }
+        if buf.len() > rem {
+            for chunk in buf[rem..].chunks(self.encoding.block_size) {
+                self.buffer[..chunk.len()].copy_from_slice(chunk);
+                self.tail += chunk.len();
+                if self.tail == self.encoding.block_size {
+                    self.consume_block()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn consume_block(&mut self) -> Result<()> {
+        let mut buf = [0u8; MAX_ARMORED_BLOCK_SIZE];
+        let len = self.encoding.encode_block(&self.buffer[..self.tail], &mut buf)?;
+        self.tail = 0;
+        if self.bytes_count > 0 && self.bytes_count % WORD_LENGTH == 0 {
+            let newline = self.bytes_count % SENTENCE_LENGTH == 0;
+            self.inner.write_all(if newline { b"\n" } else { b" " })?;
+        }
+        let rem = cmp::min(len, WORD_LENGTH - self.bytes_count % WORD_LENGTH);
+        self.inner.write_all(&buf[..rem])?;
+        self.bytes_count += rem;
+        if len > rem {
+            for chunk in buf[rem..len].chunks(WORD_LENGTH) {
+                let newline = self.bytes_count % SENTENCE_LENGTH == 0;
+                self.inner.write_all(if newline { b"\n" } else { b" " })?;
+                self.inner.write_all(chunk)?;
+                self.bytes_count += chunk.len();
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'a, W> Write for ArmorWriter<'a, W>
+where W: io::Write
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.write_buffer(buf) {
+            Ok(_) => Ok(buf.len()),
+            Err(err) => Err(io::Error::from(err))
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Armor a byte slice using Saltpack ASCII Armor Format and write the result to io::Write.
 ///
 /// # Examples
 /// ```
 /// use saltpack::armor::*;
 /// let mut bin = &"TEST".as_bytes()[..];
-/// let mut buffer = [0u8; 200];
-/// let result = armor(BASE62, &mut bin, &mut &mut buffer[..], "MESSAGE");
+/// let mut buffer: Vec<u8> = vec![];
+/// let result = armor(BASE62, &mut bin, &mut buffer, "MESSAGE");
 /// assert!(result.is_ok(), "{:?}", result);
-/// assert_eq!(&String::from_utf8_lossy(&buffer[..result.unwrap()]),
+/// assert_eq!(&String::from_utf8(buffer).unwrap(),
 ///     "BEGIN SALTPACK MESSAGE. 1XgHcy. END SALTPACK MESSAGE.");
 /// ```
 pub fn armor<W>(encoding: &BaseXEncoding,
                 src: &[u8],
                 out: &mut W,
                 message_type: &str)
-                -> Result<usize>
+                -> Result<()>
     where W: io::Write
 {
-    let header = b"BEGIN SALTPACK ";
-    let footer = b". END SALTPACK ";
-    let mut written = 0;
-    written += out.write(header)?;
-    written += out.write(message_type.as_bytes())?;
-    written += out.write(b". ")?;
-    written += encoding.encode(src, out)?;
-    written += out.write(footer)?;
-    written += out.write(message_type.as_bytes())?;
-    written += out.write(b".")?;
-    Ok(written)
+    let mut wr = ArmorWriter::new(encoding, out, message_type)?;
+    wr.write_all(src)?;
+    wr.finish()
 }
 
 /// Dearmor a string (as [`std::io::Read`]) using Saltpack ASCII Armor Format and write the result
@@ -110,51 +210,6 @@ pub struct BaseXEncoding {
 }
 
 impl BaseXEncoding {
-    fn encode<W>(&self, src: &[u8], out: &mut W) -> Result<usize>
-        where W: io::Write
-    {
-        let mut written = 0;
-        let mut trailing = 0;
-        let mut words = 0;
-        for block in src.chunks(self.block_size) {
-            let mut buf = [0u8; MAX_ARMORED_BLOCK_SIZE];
-            let len = self.encode_block(block, &mut buf)?;
-
-            if trailing == 0 && words > 0 {
-                let separator = if words % SENTENCE_LENGTH == 0 {
-                    b"\n"
-                } else {
-                    b" "
-                };
-                written += out.write(separator)?;
-            }
-            let partial = cmp::min(len, WORD_LENGTH - trailing);
-            written += out.write(&buf[..partial])?;
-            trailing += partial;
-            if trailing == WORD_LENGTH {
-                words += 1;
-                trailing = 0;
-            }
-            if len > partial {
-                for chunk in buf[partial..len].chunks(WORD_LENGTH) {
-                    let separator = if words % SENTENCE_LENGTH == 0 {
-                        b"\n"
-                    } else {
-                        b" "
-                    };
-                    written += out.write(separator)?;
-                    written += out.write(chunk)?;
-                    if chunk.len() < WORD_LENGTH {
-                        trailing = chunk.len();
-                    } else {
-                        words += 1;
-                    }
-                }
-            }
-        }
-        Ok(written)
-    }
-
     fn encode_block(&self, src: &[u8], out: &mut [u8]) -> Result<usize> {
         let clen = self.min_chars_size(src.len());
         // encode() should allocate enough space. This should not happen.
@@ -324,9 +379,13 @@ mod tests {
         let mut dst = [0u8; 1024];
         for i in 0..128 {
             thread_rng().fill_bytes(&mut src[..i]);
-            let result = armor(BASE62, &mut &src[..i], &mut &mut armored[..], "MESSAGE");
-            assert!(result.is_ok());
-            let clen = result.unwrap();
+            let clen;
+            {
+                let mut cursor = io::Cursor::new(&mut armored[..]);
+                let result = armor(BASE62, &mut &src[..i], &mut cursor, "MESSAGE");
+                assert!(result.is_ok());
+                clen = cursor.position() as usize;
+            }
             let result = dearmor(BASE62, &mut &armored[..clen], &mut &mut dst[..]);
             assert!(result.is_ok());
             let blen = result.unwrap();
@@ -342,14 +401,15 @@ mod tests {
                 #[test]
                 fn test_armor() {
                     let mut buf = [0u8; 4096];
-                    let result;
+                    let clen;
                     {
                         let mut reader = &$input[..];
-                        let mut writer = &mut buf[..];
-                        result = armor(BASE62, &mut reader, &mut writer, "MESSAGE");
+                        let mut cursor = io::Cursor::new(&mut buf[..]);
+                        let result = armor(BASE62, &mut reader, &mut cursor, "MESSAGE");
+                        assert!(result.is_ok());
+                        clen = cursor.position() as usize;
                     }
-                    assert!(result.is_ok());
-                    assert_eq!(&String::from_utf8_lossy(&buf[..result.unwrap()]), &$output);
+                    assert_eq!(&String::from_utf8_lossy(&buf[..clen]), &$output);
                 }
                 #[test]
                 fn test_dearmor() {
@@ -357,8 +417,7 @@ mod tests {
                     let result;
                     {
                         let mut reader = &$output.as_bytes()[..];
-                        let mut writer = &mut buf[..];
-                        result = dearmor(BASE62, &mut reader, &mut writer);
+                        result = dearmor(BASE62, &mut reader, &mut buf);
                     }
                     assert!(result.is_ok(), "{:?}", result);
                     assert_eq!(&String::from_utf8_lossy(&buf[..result.unwrap()]),
