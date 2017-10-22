@@ -1,4 +1,4 @@
-use rmp::encode;
+use rmp::{encode, decode};
 use std;
 use std::error;
 use std::fmt;
@@ -14,13 +14,31 @@ pub enum Error {
     IllegalCharacter(u8),
     /// Found a invalid armor header.
     InvalidArmorHeader,
-    Crypto,
+    Unspecified,
     Io(io::Error),
 }
 
 impl From<encode::ValueWriteError> for Error {
     fn from(_: encode::ValueWriteError) -> Error {
-        Error::Crypto
+        Error::Unspecified
+    }
+}
+
+impl From<decode::ValueReadError> for Error {
+    fn from(_: decode::ValueReadError) -> Error {
+        Error::Unspecified
+    }
+}
+
+impl From<decode::NumValueReadError> for Error {
+    fn from(_: decode::NumValueReadError) -> Error {
+        Error::Unspecified
+    }
+}
+
+impl<'a> From<decode::DecodeStringError<'a>> for Error {
+    fn from(_: decode::DecodeStringError<'a>) -> Error {
+        Error::Unspecified
     }
 }
 
@@ -37,7 +55,7 @@ impl From<Error> for io::Error {
             Error::IllegalBlockLength(_, _) => io::Error::new(io::ErrorKind::InvalidInput, err),
             Error::IllegalCharacter(_) => io::Error::new(io::ErrorKind::InvalidInput, err),
             Error::InvalidArmorHeader => io::Error::new(io::ErrorKind::InvalidInput, err),
-            Error::Crypto => io::Error::new(io::ErrorKind::Other, err),
+            Error::Unspecified => io::Error::new(io::ErrorKind::Other, err),
             Error::Io(err) => err,
         }
     }
@@ -50,7 +68,7 @@ impl fmt::Display for Error {
             Error::IllegalBlockLength(expected, actual) => write!(f, "Illegal input length {}. Expecting: {}", actual, expected),
             Error::IllegalCharacter(chr) => write!(f, "Encountered an illegal character {}", chr),
             Error::InvalidArmorHeader => write!(f, "Encountered an invalid armor header"),
-            Error::Crypto => write!(f, "Unspecified error"),
+            Error::Unspecified => write!(f, "Unspecified error"),
             Error::Io(ref err) => err.fmt(f),
         }
     }
@@ -63,7 +81,7 @@ impl error::Error for Error {
             Error::IllegalBlockLength(_, _) => "illegal input length",
             Error::IllegalCharacter(_) => "illegal character",
             Error::InvalidArmorHeader => "invalid armor header",
-            Error::Crypto => "unspecified error",
+            Error::Unspecified => "unspecified error",
             Error::Io(ref err) => err.description(),
         }
     }
@@ -74,7 +92,7 @@ impl error::Error for Error {
             Error::IllegalBlockLength(_, _) =>None,
             Error::IllegalCharacter(_) => None,
             Error::InvalidArmorHeader => None,
-            Error::Crypto => None,
+            Error::Unspecified => None,
             Error::Io(ref err) => Some(err),
         }
     }

@@ -5,6 +5,9 @@ extern crate rand;
 extern crate rmp;
 extern crate sodiumoxide;
 
+#[cfg(test)]
+extern crate rustc_serialize;
+
 pub mod armor;
 pub mod error;
 pub mod sign;
