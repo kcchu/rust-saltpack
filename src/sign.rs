@@ -19,16 +19,18 @@ pub fn sign_detached<S, W>(message: &[u8], signer: &S, out: &mut W, rng: &mut Rn
           W: io::Write
 {
     let public_key = signer.public_key_bytes();
-    let header_hash = write_header(public_key, 1, out, rng)?;
+    let header_hash = write_header(public_key, 2, out, rng)?;
     let mut hash = SHA512::new();
     hash.update(header_hash.as_ref());
     hash.update(message);
     let message_digest = hash.finish();
-    let mut message_sig_text = [0u8; 29 + SHA512_HASH_LEN];
-    message_sig_text[..29].copy_from_slice(b"saltpack detached signature\0");
-    message_sig_text[29..].copy_from_slice(message_digest.as_ref());
-    let message_sig = signer.sign(&message_sig_text)?;
-    out.write(message_sig.as_ref())?;
+    let mut message_sig_text = [0u8; 32 + SHA512_HASH_LEN];
+    let prologue = b"saltpack detached signature\0";
+    message_sig_text[..prologue.len()].copy_from_slice(prologue);
+    message_sig_text[prologue.len()..message_digest.len() + prologue.len()]
+        .copy_from_slice(message_digest.as_ref());
+    let message_sig = signer.sign(&message_sig_text[..message_digest.len() + prologue.len()])?;
+    encode::write_bin(out, message_sig.as_ref())?;
     Ok(())
 }
 
@@ -69,4 +71,34 @@ fn write_header_version<W>(out: &mut W) -> Result<()>
     encode::write_pfix(out, 1)?;
     encode::write_pfix(out, 0)?;
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    extern crate rustc_serialize;
+
+    use ::armor;
+    use ::crypto::ed25519;
+    use rand;
+    use super::*;
+
+    #[test]
+    fn sign_then_armor() {
+        let msg = b"The quick brown fox jumps over the lazy dog";
+        let mut rng = rand::os::OsRng::new().unwrap();
+        let sk = ed25519::PrivateKey::generate_random_key(&mut rng).unwrap();
+
+        let mut buf = [0u8; 4096];
+        let mut cursor = io::Cursor::new(&mut buf[..]);
+        {
+            let mut wr = armor::ArmorWriter::new(armor::BASE62, &mut cursor, "MESSAGE").unwrap();
+            let result = sign_detached(msg, &sk, &mut wr, &mut rng);
+            assert!(result.is_ok());
+            let result = wr.finish();
+            assert!(result.is_ok());
+        }
+        let clen = cursor.position() as usize;
+        println!("Result: {}", String::from_utf8_lossy(&cursor.get_ref()[..clen]));
+    }
 }
