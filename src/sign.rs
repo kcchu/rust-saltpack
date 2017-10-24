@@ -1,8 +1,7 @@
-use crypto::*;
+use crypto::{HashState, Signer, Verifier, ed25519, randombytes_fill, sha512};
 use error::{Error, Result};
 use rmp::{decode, encode};
 use std::io;
-use rand::Rng;
 
 #[cfg(test)]
 use rustc_serialize::hex::ToHex;
@@ -19,7 +18,7 @@ const NONCE_LEN: usize = 32;
 
 // }
 
-pub fn sign_detached<S, W>(message: &[u8], signer: &S, out: &mut W, rng: &mut Rng) -> Result<()>
+pub fn sign_detached<S, W>(message: &[u8], signer: &S, out: &mut W) -> Result<()>
     where S: Signer,
           W: io::Write
 {
@@ -28,12 +27,12 @@ pub fn sign_detached<S, W>(message: &[u8], signer: &S, out: &mut W, rng: &mut Rn
     #[cfg(test)]
     println!("public_key: {}", public_key.to_hex());
 
-    let header_hash = write_header(public_key, 2, out, rng)?;
+    let header_hash = write_header(public_key, 2, out)?;
 
     #[cfg(test)]
     println!("header digest: {}", header_hash.as_ref().to_hex());
 
-    let mut hash = SHA512::new();
+    let mut hash = sha512::HashState::new();
     hash.update(header_hash.as_ref());
     hash.update(message);
     let message_digest = hash.finish();
@@ -41,7 +40,7 @@ pub fn sign_detached<S, W>(message: &[u8], signer: &S, out: &mut W, rng: &mut Rn
     #[cfg(test)]
     println!("message digest: {}", message_digest.as_ref().to_hex());
 
-    let mut message_sig_text = [0u8; 32 + SHA512_HASH_LEN];
+    let mut message_sig_text = [0u8; 32 + sha512::DIGEST_LEN];
     let prologue = b"saltpack detached signature\0";
     message_sig_text[..prologue.len()].copy_from_slice(prologue);
     message_sig_text[prologue.len()..message_digest.len() + prologue.len()]
@@ -56,10 +55,10 @@ pub fn sign_detached<S, W>(message: &[u8], signer: &S, out: &mut W, rng: &mut Rn
 }
 
 pub fn verify_detached<R>(message: &[u8], rd: &mut R) -> Result<ed25519::PublicKey>
-where R: io::Read
+    where R: io::Read
 {
     let (public_key, header_hash) = read_header(rd)?;
-    let mut signature_buf = [0u8; ED25519_SIGNATURE_LEN];
+    let mut signature_buf = [0u8; ed25519::SIGNATURE_LEN];
     let signature_bytes = read_bin(rd, &mut signature_buf)?;
     let detached_signature = ed25519::Signature::from_bytes(signature_bytes)?;
 
@@ -73,7 +72,7 @@ where R: io::Read
     #[cfg(test)]
     println!("header digest: {}", header_hash.as_ref().to_hex());
 
-    let mut hash = SHA512::new();
+    let mut hash = sha512::HashState::new();
     hash.update(header_hash.as_ref());
     hash.update(message);
     let message_digest = hash.finish();
@@ -81,24 +80,24 @@ where R: io::Read
     #[cfg(test)]
     println!("message digest: {}", message_digest.as_ref().to_hex());
 
-    let mut message_sig_text = [0u8; 32 + SHA512_HASH_LEN];
+    let mut message_sig_text = [0u8; 32 + sha512::DIGEST_LEN];
     let prologue = b"saltpack detached signature\0";
     message_sig_text[..prologue.len()].copy_from_slice(prologue);
     message_sig_text[prologue.len()..message_digest.len() + prologue.len()]
-            .copy_from_slice(message_digest.as_ref());
-    public_key.verify(&message_sig_text[..message_digest.len() + prologue.len()], &detached_signature)?;
+        .copy_from_slice(message_digest.as_ref());
+    public_key.verify(&message_sig_text[..message_digest.len() + prologue.len()],
+                &detached_signature)?;
     Ok(public_key)
 }
 
 fn write_header<W>(public_key_bytes: &[u8],
                    mode: u8,
-                   out: &mut W,
-                   rng: &mut Rng)
-                   -> Result<SHA512Digest>
+                   out: &mut W)
+                   -> Result<sha512::Digest>
     where W: io::Write
 {
     let mut nonce = [0u8; NONCE_LEN];
-    rng.fill_bytes(&mut nonce);
+    randombytes_fill(&mut nonce);
 
     let mut buf = [0u8; MAX_SIGN_HEADER_LEN];
     let written;
@@ -114,7 +113,7 @@ fn write_header<W>(public_key_bytes: &[u8],
         written = buf_len - wr.len();
     }
     let header_bytes = &buf[..written];
-    let header_hash = SHA512::hash(header_bytes);
+    let header_hash = sha512::hash(header_bytes);
 
     encode::write_bin(out, header_bytes)?;
     Ok(header_hash)
@@ -129,12 +128,12 @@ fn write_header_version<W>(out: &mut W) -> Result<()>
     Ok(())
 }
 
-fn read_header<'a, R>(rd: &'a mut R) -> Result<(ed25519::PublicKey, SHA512Digest)>
-where R: io::Read
+fn read_header<'a, R>(rd: &'a mut R) -> Result<(ed25519::PublicKey, sha512::Digest)>
+    where R: io::Read
 {
     let mut buf = [0u8; MAX_SIGN_HEADER_LEN];
     let mut header_bytes = read_bin(rd, &mut buf)?;
-    let header_hash = SHA512::hash(header_bytes);
+    let header_hash = sha512::hash(header_bytes);
     let len = decode::read_array_len(&mut header_bytes)?;
     if len != 5 {
         return Err(Error::Unspecified);
@@ -149,7 +148,7 @@ where R: io::Read
         return Err(Error::Unspecified);
     }
     let mode: u32 = decode::read_int(&mut header_bytes)?;
-    let mut public_key_buf = [0u8; ED25519_PUBLIC_KEY_LEN];
+    let mut public_key_buf = [0u8; ed25519::PUBLIC_KEY_LEN];
     let public_key_bytes = read_bin(&mut header_bytes, &mut public_key_buf)?;
     let public_key = ed25519::PublicKey::from_bytes(public_key_bytes)?;
     let mut nonce = [0u8; NONCE_LEN];
@@ -158,7 +157,7 @@ where R: io::Read
 }
 
 fn read_bin<'a, R>(rd: &mut R, buf: &'a mut [u8]) -> Result<&'a [u8]>
-where R: io::Read
+    where R: io::Read
 {
     let len = decode::read_bin_len(rd)? as usize;
     if len > buf.len() {
@@ -169,7 +168,7 @@ where R: io::Read
 }
 
 fn read_header_version<R>(rd: &mut R) -> Result<(u32, u32)>
-where R: io::Read
+    where R: io::Read
 {
     let len = decode::read_array_len(rd)?;
     if len != 2 {
@@ -186,39 +185,37 @@ mod tests {
 
     use ::armor;
     use ::crypto::ed25519;
-    use rand;
     use super::*;
 
     #[test]
     fn sign_then_armor() {
         let msg = b"The quick brown fox jumps over the lazy dog";
-        let mut rng = rand::os::OsRng::new().unwrap();
-        let sk = ed25519::PrivateKey::generate_random_key(&mut rng).unwrap();
+        let sk = ed25519::PrivateKey::generate_random_key().unwrap();
 
         let mut buf = [0u8; 4096];
         let mut cursor = io::Cursor::new(&mut buf[..]);
         {
             let mut wr = armor::ArmorWriter::new(armor::BASE62, &mut cursor, "MESSAGE").unwrap();
-            let result = sign_detached(msg, &sk, &mut wr, &mut rng);
+            let result = sign_detached(msg, &sk, &mut wr);
             assert!(result.is_ok());
             let result = wr.finish();
             assert!(result.is_ok());
         }
         let clen = cursor.position() as usize;
-        println!("Result: {}", String::from_utf8_lossy(&cursor.get_ref()[..clen]));
+        println!("Result: {}",
+                 String::from_utf8_lossy(&cursor.get_ref()[..clen]));
     }
 
     #[test]
     fn sign_then_verify() {
         let msg = b"The quick brown fox jumps over the lazy dog";
-        let mut rng = rand::os::OsRng::new().unwrap();
-        let sk = ed25519::PrivateKey::generate_random_key(&mut rng).unwrap();
+        let sk = ed25519::PrivateKey::generate_random_key().unwrap();
 
         let mut buf = [0u8; 4096];
         let blen;
         {
             let mut cursor = io::Cursor::new(&mut buf[..]);
-            let result = sign_detached(msg, &sk, &mut cursor, &mut rng);
+            let result = sign_detached(msg, &sk, &mut cursor);
             assert!(result.is_ok());
             blen = cursor.position() as usize;
         }
@@ -231,14 +228,13 @@ mod tests {
     #[test]
     fn sign_then_verify_fail() {
         let msg = b"The quick brown fox jumps over the lazy dog";
-        let mut rng = rand::os::OsRng::new().unwrap();
-        let sk = ed25519::PrivateKey::generate_random_key(&mut rng).unwrap();
+        let sk = ed25519::PrivateKey::generate_random_key().unwrap();
 
         let mut buf = [0u8; 4096];
         let blen;
         {
             let mut cursor = io::Cursor::new(&mut buf[..]);
-            let result = sign_detached(msg, &sk, &mut cursor, &mut rng);
+            let result = sign_detached(msg, &sk, &mut cursor);
             assert!(result.is_ok());
             blen = cursor.position() as usize;
         }

@@ -37,7 +37,7 @@ pub static BASE62: &'static BaseXEncoding = &BaseXEncoding {
 // };
 
 pub struct ArmorWriter<'a, W: 'a>
-where W: io::Write
+    where W: io::Write
 {
     encoding: &'a BaseXEncoding,
     inner: &'a mut W,
@@ -48,9 +48,12 @@ where W: io::Write
 }
 
 impl<'a, W> ArmorWriter<'a, W>
-where W: io::Write
+    where W: io::Write
 {
-    pub fn new(encoding: &'a BaseXEncoding, inner: &'a mut W, message_type: &'a str) -> Result<ArmorWriter<'a, W>> {
+    pub fn new(encoding: &'a BaseXEncoding,
+               inner: &'a mut W,
+               message_type: &'a str)
+               -> Result<ArmorWriter<'a, W>> {
         let mut wr = ArmorWriter {
             encoding: encoding,
             inner: inner,
@@ -135,12 +138,12 @@ where W: io::Write
 }
 
 impl<'a, W> Write for ArmorWriter<'a, W>
-where W: io::Write
+    where W: io::Write
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self.write_buffer(buf) {
             Ok(_) => Ok(buf.len()),
-            Err(err) => Err(io::Error::from(err))
+            Err(err) => Err(io::Error::from(err)),
         }
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -160,11 +163,7 @@ where W: io::Write
 /// assert_eq!(&String::from_utf8(buffer).unwrap(),
 ///     "BEGIN SALTPACK MESSAGE. 1XgHcy. END SALTPACK MESSAGE.");
 /// ```
-pub fn armor<W>(encoding: &BaseXEncoding,
-                src: &[u8],
-                out: &mut W,
-                message_type: &str)
-                -> Result<()>
+pub fn armor<W>(encoding: &BaseXEncoding, src: &[u8], out: &mut W, message_type: &str) -> Result<()>
     where W: io::Write
 {
     let mut wr = ArmorWriter::new(encoding, out, message_type)?;

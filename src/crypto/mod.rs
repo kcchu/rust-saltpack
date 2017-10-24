@@ -14,3 +14,8 @@ pub fn sodium_init_once() {
         sodiumoxide::init();
     });
 }
+
+pub fn randombytes_fill(data: &mut [u8]) {
+    sodium_init_once();
+    sodiumoxide::randombytes::randombytes_into(data);
+}

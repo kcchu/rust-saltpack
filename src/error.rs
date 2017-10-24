@@ -64,8 +64,18 @@ impl From<Error> for io::Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::BlockTooLarge(expected, actual) => write!(f, "The input block of {} is too large. Limit: {}", actual, expected),
-            Error::IllegalBlockLength(expected, actual) => write!(f, "Illegal input length {}. Expecting: {}", actual, expected),
+            Error::BlockTooLarge(expected, actual) => {
+                write!(f,
+                       "The input block of {} is too large. Limit: {}",
+                       actual,
+                       expected)
+            }
+            Error::IllegalBlockLength(expected, actual) => {
+                write!(f,
+                       "Illegal input length {}. Expecting: {}",
+                       actual,
+                       expected)
+            }
             Error::IllegalCharacter(chr) => write!(f, "Encountered an illegal character {}", chr),
             Error::InvalidArmorHeader => write!(f, "Encountered an invalid armor header"),
             Error::Unspecified => write!(f, "Unspecified error"),
@@ -89,7 +99,7 @@ impl error::Error for Error {
     fn cause(&self) -> Option<&error::Error> {
         match *self {
             Error::BlockTooLarge(_, _) => None,
-            Error::IllegalBlockLength(_, _) =>None,
+            Error::IllegalBlockLength(_, _) => None,
             Error::IllegalCharacter(_) => None,
             Error::InvalidArmorHeader => None,
             Error::Unspecified => None,

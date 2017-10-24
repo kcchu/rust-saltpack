@@ -1,9 +1,5 @@
 use error::Result;
 
-pub const ED25519_PRIVATE_KEY_LEN: usize = 32;
-pub const ED25519_PUBLIC_KEY_LEN: usize = 64;
-pub const ED25519_SIGNATURE_LEN: usize = 64;
-
 pub trait Signer {
     type Signature: AsRef<[u8]>;
     type PublicKey: Verifier;
@@ -20,9 +16,12 @@ pub trait Verifier {
 pub mod ed25519 {
     use crypto::sodium_init_once;
     use error::{Error, Result};
-    use rand::Rng;
     use sodiumoxide::crypto::sign as crypto_sign;
     use super::*;
+
+    pub const PRIVATE_KEY_LEN: usize = 32;
+    pub const PUBLIC_KEY_LEN: usize = 64;
+    pub const SIGNATURE_LEN: usize = 64;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct PublicKey(crypto_sign::PublicKey);
@@ -68,7 +67,7 @@ pub mod ed25519 {
     }
 
     impl PrivateKey {
-        pub fn generate_random_key(_rng: &mut Rng) -> Result<Self> {
+        pub fn generate_random_key() -> Result<Self> {
             sodium_init_once();
             let (pk, sk) = crypto_sign::gen_keypair();
             Ok(PrivateKey {
@@ -135,8 +134,7 @@ mod tests {
     #[test]
     fn sign_and_verify() {
         let msg = b"The quick brown fox jumps over the lazy dog";
-        let mut rng = rand::os::OsRng::new().unwrap();
-        let sk = ed25519::PrivateKey::generate_random_key(&mut rng).unwrap();
+        let sk = ed25519::PrivateKey::generate_random_key().unwrap();
         let pk = sk.public_key();
         let r = sk.sign(msg);
         assert!(r.is_ok());
@@ -149,8 +147,7 @@ mod tests {
     #[test]
     fn sign_and_verify_fail() {
         let msg = b"The quick brown fox jumps over the lazy dog";
-        let mut rng = rand::os::OsRng::new().unwrap();
-        let sk = ed25519::PrivateKey::generate_random_key(&mut rng).unwrap();
+        let sk = ed25519::PrivateKey::generate_random_key().unwrap();
         let pk = sk.public_key();
         let r = sk.sign(msg);
         assert!(r.is_ok());
