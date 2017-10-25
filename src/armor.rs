@@ -23,6 +23,45 @@ pub static BASE62: &'static BaseXEncoding = &BaseXEncoding {
     shift: false,
 };
 
+/// Armor a byte slice using Saltpack ASCII Armor Format and write the result to io::Write.
+///
+/// # Examples
+/// ```
+/// use saltpack::armor::*;
+/// let mut bin = &"TEST".as_bytes()[..];
+/// let mut buffer: Vec<u8> = vec![];
+/// let result = armor(BASE62, &mut bin, &mut buffer, "MESSAGE");
+/// assert!(result.is_ok(), "{:?}", result);
+/// assert_eq!(&String::from_utf8(buffer).unwrap(),
+///     "BEGIN SALTPACK MESSAGE. 1XgHcy. END SALTPACK MESSAGE.");
+/// ```
+pub fn armor<W>(encoding: &BaseXEncoding, src: &[u8], out: &mut W, message_type: &str) -> Result<()>
+    where W: io::Write
+{
+    let mut wr = ArmorWriter::new(encoding, out, message_type)?;
+    wr.write_all(src)?;
+    wr.finish()
+}
+
+/// Dearmor a string (as [`std::io::Read`]) using Saltpack ASCII Armor Format and write the result
+/// to a byte slice.
+///
+/// # Examples
+/// ```
+/// use saltpack::armor::*;
+/// let mut bin = &"BEGIN SALTPACK MESSAGE. 1XgHcy. END SALTPACK MESSAGE.".as_bytes()[..];
+/// let mut buffer = [0u8; 5];
+/// let result = dearmor(BASE62, &mut bin, &mut &mut buffer[..]);
+/// assert!(result.is_ok(), "{:?}", result);
+/// assert_eq!(&String::from_utf8_lossy(&buffer[..result.unwrap()]), "TEST");
+/// ```
+pub fn dearmor<R>(encoding: &BaseXEncoding, src: &mut R, out: &mut [u8]) -> Result<usize>
+    where R: io::Read
+{
+    let mut rd = ArmorReader::new(encoding, src)?;
+    rd.read_into(out)
+}
+
 // It will not be an efficient Base64 function, but it is here for SaltPack
 // compatibility.
 // const BASE64_CHARS: &'static[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
@@ -95,7 +134,7 @@ impl<'a, W> ArmorWriter<'a, W>
         Ok(())
     }
 
-    fn write_buffer(&mut self, buf: &[u8]) -> Result<()> {
+    fn write_buffer(&mut self, buf: &[u8]) -> Result<usize> {
         let rem = cmp::min(buf.len(), self.buffer.len() - self.tail);
         self.buffer[self.tail..self.tail + rem].copy_from_slice(&buf[..rem]);
         self.tail += rem;
@@ -111,7 +150,7 @@ impl<'a, W> ArmorWriter<'a, W>
                 }
             }
         }
-        Ok(())
+        Ok(buf.len())
     }
 
     fn consume_block(&mut self) -> Result<()> {
@@ -141,67 +180,104 @@ impl<'a, W> Write for ArmorWriter<'a, W>
     where W: io::Write
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self.write_buffer(buf) {
-            Ok(_) => Ok(buf.len()),
-            Err(err) => Err(io::Error::from(err)),
-        }
+        Ok(self.write_buffer(buf)?)
     }
+
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
     }
 }
 
-/// Armor a byte slice using Saltpack ASCII Armor Format and write the result to io::Write.
-///
-/// # Examples
-/// ```
-/// use saltpack::armor::*;
-/// let mut bin = &"TEST".as_bytes()[..];
-/// let mut buffer: Vec<u8> = vec![];
-/// let result = armor(BASE62, &mut bin, &mut buffer, "MESSAGE");
-/// assert!(result.is_ok(), "{:?}", result);
-/// assert_eq!(&String::from_utf8(buffer).unwrap(),
-///     "BEGIN SALTPACK MESSAGE. 1XgHcy. END SALTPACK MESSAGE.");
-/// ```
-pub fn armor<W>(encoding: &BaseXEncoding, src: &[u8], out: &mut W, message_type: &str) -> Result<()>
-    where W: io::Write
-{
-    let mut wr = ArmorWriter::new(encoding, out, message_type)?;
-    wr.write_all(src)?;
-    wr.finish()
-}
-
-/// Dearmor a string (as [`std::io::Read`]) using Saltpack ASCII Armor Format and write the result
-/// to a byte slice.
-///
-/// # Examples
-/// ```
-/// use saltpack::armor::*;
-/// let mut bin = &"BEGIN SALTPACK MESSAGE. 1XgHcy. END SALTPACK MESSAGE.".as_bytes()[..];
-/// let mut buffer = [0u8; 5];
-/// let result = dearmor(BASE62, &mut bin, &mut &mut buffer[..]);
-/// assert!(result.is_ok(), "{:?}", result);
-/// assert_eq!(&String::from_utf8_lossy(&buffer[..result.unwrap()]), "TEST");
-/// ```
-pub fn dearmor<R>(encoding: &BaseXEncoding, src: &mut R, out: &mut [u8]) -> Result<usize>
+pub struct ArmorReader<'a, R: 'a>
     where R: io::Read
 {
-    let mut stream = src.bytes().skip_while(|r| match *r {
-        Ok(c) => c != b'.',
-        Err(_) => false,
-    });
-    if let Some(r) = stream.next() {
-        let c = r?;
-        if c == b'.' {
-            let bytes = stream.take_while(|r| match *r {
+    encoding: &'a BaseXEncoding,
+    inner: &'a mut R,
+    decode_buffer: [u8; MAX_BLOCK_SIZE],
+    head: usize,
+    tail: usize,
+    end_of_message: bool,
+}
+
+impl<'a, R> ArmorReader<'a, R>
+    where R: io::Read
+{
+    pub fn new(encoding: &'a BaseXEncoding,
+               inner: &'a mut R)
+               -> Result<ArmorReader<'a, R>> {
+        let rd = ArmorReader {
+            encoding: encoding,
+            inner: inner,
+            decode_buffer: [0u8; MAX_BLOCK_SIZE],
+            head: 0,
+            tail: 0,
+            end_of_message: false,
+        };
+        let result = {
+            let mut stream = rd.inner.bytes().skip_while(|r| match *r {
                 Ok(c) => c != b'.',
-                Err(_) => true,
+                Err(_) => false,
             });
-            let written = encoding.decode(bytes, out)?;
-            return Ok(written);
+            stream.next()
+        };
+        if let Some(Ok(c)) = result {
+            if c == b'.' {
+                return Ok(rd);
+            }
         }
+        Err(Error::InvalidArmorHeader)
     }
-    Err(Error::InvalidArmorHeader)
+
+    pub fn consume_chunk(&mut self) -> Result<usize> {
+        let filter_chars = [b'>', b'\n', b'\r', b'\t', b' '];
+        let mut chunk = [0u8; MAX_ARMORED_BLOCK_SIZE];
+        let mut tail = 0;
+        while !self.end_of_message && tail < self.encoding.armored_block_size {
+            let len = self.inner.read(&mut chunk[tail..tail+1])?;
+            if len == 0 {
+                // eof
+                break;
+            } else {
+                if chunk[tail] == b'.' {
+                    self.end_of_message = true;
+                    break;
+                }
+                if !filter_chars.contains(&chunk[tail]) {
+                    tail += 1;
+                }
+            }
+        }
+        assert!(self.head == self.tail, "only consume a chunk when the buffer is empty");
+        self.head = 0; // reset head of the decoded block
+        self.tail = self.encoding.decode_block(&chunk[..tail], &mut self.decode_buffer[..])?;
+        Ok(self.tail)
+    }
+
+    fn read_into(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let mut filled = 0;
+        while filled < buf.len() {
+            let bytes_to_take = cmp::min(buf.len() - filled, self.tail - self.head);
+            buf[filled..filled + bytes_to_take].copy_from_slice(&self.decode_buffer[self.head..self.head + bytes_to_take]);
+            filled += bytes_to_take;
+            self.head += bytes_to_take;
+            if self.head == self.tail {
+                let len = self.consume_chunk()?;
+                if len == 0 {
+                    // eof
+                    break;
+                }
+            }
+        }
+        Ok(filled)
+    }
+}
+
+impl<'a, R> io::Read for ArmorReader<'a, R>
+    where R: io::Read
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        Ok(self.read_into(buf)?)
+    }
 }
 
 pub struct BaseXEncoding {
@@ -232,35 +308,6 @@ impl BaseXEncoding {
             bytes_int = bytes_int / chars_len;
         }
         Ok(clen)
-    }
-
-    fn decode<T>(&self, src: T, out: &mut [u8]) -> Result<usize>
-        where T: Iterator<Item = io::Result<u8>>
-    {
-        let filter_chars = [b'>', b'\n', b'\r', b'\t', b' '];
-        let filtered = src.filter(|r| match *r {
-            Ok(c) => !filter_chars.contains(&c),
-            Err(_) => true,
-        });
-        let mut writer = &mut out[..];
-        let mut written = 0;
-        let mut chunk = [0u8; MAX_ARMORED_BLOCK_SIZE];
-        let mut buf = [0u8; MAX_BLOCK_SIZE];
-        let mut tail = 0;
-        for r in filtered {
-            chunk[tail] = r?;
-            tail += 1;
-            if tail == self.armored_block_size {
-                let len = self.decode_block(&chunk[..tail], &mut buf)?;
-                written += writer.write(&buf[..len])?;
-                tail = 0;
-            }
-        }
-        if tail > 0 {
-            let len = self.decode_block(&chunk[..tail], &mut buf)?;
-            written += writer.write(&buf[..len])?;
-        }
-        Ok(written)
     }
 
     fn decode_block(&self, src: &[u8], out: &mut [u8]) -> Result<usize> {

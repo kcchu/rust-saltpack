@@ -51,11 +51,11 @@ impl From<io::Error> for Error {
 impl From<Error> for io::Error {
     fn from(err: Error) -> io::Error {
         match err {
-            Error::BlockTooLarge(_, _) => io::Error::new(io::ErrorKind::InvalidInput, err),
-            Error::IllegalBlockLength(_, _) => io::Error::new(io::ErrorKind::InvalidInput, err),
-            Error::IllegalCharacter(_) => io::Error::new(io::ErrorKind::InvalidInput, err),
-            Error::InvalidArmorHeader => io::Error::new(io::ErrorKind::InvalidInput, err),
-            Error::Unspecified => io::Error::new(io::ErrorKind::Other, err),
+            Error::BlockTooLarge(_, _) => io::Error::from(io::ErrorKind::InvalidInput),
+            Error::IllegalBlockLength(_, _) => io::Error::from(io::ErrorKind::UnexpectedEof),
+            Error::IllegalCharacter(_) => io::Error::from(io::ErrorKind::InvalidData),
+            Error::InvalidArmorHeader => io::Error::from(io::ErrorKind::InvalidData),
+            Error::Unspecified => io::Error::from(io::ErrorKind::Other),
             Error::Io(err) => err,
         }
     }
