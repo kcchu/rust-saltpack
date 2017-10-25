@@ -5,6 +5,7 @@ authors = ["Chu Ka-cheong <kcchu@users.noreply.github.com>"]
 
 [dependencies]
 bigint = "4.2.0"
+byteorder = "1.1.0"
 libc = "0.2.32"
 libsodium-sys = "0.0.15"
 rand = "0.3.17"

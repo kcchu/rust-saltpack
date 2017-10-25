@@ -1,3 +1,4 @@
+use byteorder::{BigEndian, ByteOrder};
 use crypto::{HashState, Signer, Verifier, ed25519, randombytes_fill, sha512};
 use error::{Error, Result};
 use rmp::{decode, encode};
@@ -10,13 +11,31 @@ const MAX_SIGN_HEADER_LEN: usize = 256;
 const MAX_FORMAT_NAME_LEN: usize = 16;
 const NONCE_LEN: usize = 32;
 
-// fn sign_attached<P, W>(message: &[u8], private_key_pair: &P, chunk_size: usize, out: &mut W) ->
-// Result<usize>
-// where P: PrivateKeyPair, W: io::Write
-// {
+pub fn sign_attached<S, W>(message: &[u8], signer: &S, chunk_size: usize, out: &mut W) -> Result<()>
+    where S: Signer,
+          W: io::Write
+{
+    let public_key = signer.public_key_bytes();
 
+    #[cfg(test)]
+    println!("public_key: {}", public_key.to_hex());
 
-// }
+    let header_hash = write_header(public_key, 1, out)?;
+
+    #[cfg(test)]
+    println!("header digest: {}", header_hash.as_ref().to_hex());
+
+    let mut chunk_iter = message.chunks(chunk_size).enumerate();
+    while let Some((i, chunk)) = chunk_iter.next() {
+        sign_and_write_detached_chunk(&header_hash,
+                                      i as u64,
+                                      chunk_iter.len() == 0,
+                                      chunk,
+                                      signer,
+                                      out)?;
+    }
+    Ok(())
+}
 
 pub fn sign_detached<S, W>(message: &[u8], signer: &S, out: &mut W) -> Result<()>
     where S: Signer,
@@ -90,10 +109,7 @@ pub fn verify_detached<R>(message: &[u8], rd: &mut R) -> Result<ed25519::PublicK
     Ok(public_key)
 }
 
-fn write_header<W>(public_key_bytes: &[u8],
-                   mode: u8,
-                   out: &mut W)
-                   -> Result<sha512::Digest>
+fn write_header<W>(public_key_bytes: &[u8], mode: u8, out: &mut W) -> Result<sha512::Digest>
     where W: io::Write
 {
     let mut nonce = [0u8; NONCE_LEN];
@@ -125,6 +141,56 @@ fn write_header_version<W>(out: &mut W) -> Result<()>
     encode::write_array_len(out, 2)?;
     encode::write_pfix(out, 1)?;
     encode::write_pfix(out, 0)?;
+    Ok(())
+}
+
+fn sign_and_write_detached_chunk<S, W>(header_hash: &sha512::Digest,
+                                       seq: u64,
+                                       final_flag: bool,
+                                       chunk: &[u8],
+                                       signer: &S,
+                                       out: &mut W)
+                                       -> Result<()>
+    where S: Signer,
+          W: io::Write
+{
+    let mut seq_be = [0u8; 8];
+    BigEndian::write_u64(&mut seq_be, seq);
+    let mut hash = sha512::HashState::new();
+    hash.update(header_hash.as_ref());
+    hash.update(&seq_be);
+    hash.update(if final_flag { b"\01" } else { b"\0" });
+    hash.update(chunk);
+    let chunk_digest = hash.finish();
+
+    #[cfg(test)]
+    println!("chunk {} digest: {}", seq, chunk_digest.as_ref().to_hex());
+
+    let mut chunk_sig_text = [0u8; 32 + sha512::DIGEST_LEN];
+    let prologue = b"saltpack attached signature\0";
+    chunk_sig_text[..prologue.len()].copy_from_slice(prologue);
+    chunk_sig_text[prologue.len()..chunk_digest.len() + prologue.len()]
+        .copy_from_slice(chunk_digest.as_ref());
+    let chunk_sig = signer.sign(&chunk_sig_text[..chunk_digest.len() + prologue.len()])?;
+
+    #[cfg(test)]
+    println!("chunk {} sig: {}", seq, chunk_sig.as_ref().to_hex());
+
+    write_detached_chunk::<S, W>(final_flag, &chunk_sig, chunk, out)
+}
+
+fn write_detached_chunk<S, W>(final_flag: bool,
+                              signature: &S::Signature,
+                              chunk: &[u8],
+                              out: &mut W)
+                              -> Result<()>
+    where S: Signer,
+          W: io::Write
+{
+    encode::write_array_len(out, 3)?;
+    encode::write_bool(out, final_flag)?;
+    encode::write_bin(out, signature.as_ref())?;
+    encode::write_bin(out, chunk)?;
     Ok(())
 }
 
@@ -245,5 +311,25 @@ mod tests {
             Err(Error::Unspecified) => (),
             Err(_) => assert!(false, "unexpected error"),
         }
+    }
+
+    #[test]
+    fn sign_attach_then_armor() {
+        let msg = b"The quick brown fox jumps over the lazy dog";
+        let sk = ed25519::PrivateKey::generate_random_key().unwrap();
+
+        let mut buf = [0u8; 4096];
+        let mut cursor = io::Cursor::new(&mut buf[..]);
+        {
+            let mut wr = armor::ArmorWriter::new(armor::BASE62, &mut cursor, "MESSAGE").unwrap();
+            let result = sign_attached(msg, &sk, 5, &mut wr);
+            assert!(result.is_ok());
+            let result = wr.finish();
+            assert!(result.is_ok());
+        }
+        let clen = cursor.position() as usize;
+        println!("Result: {}",
+                 String::from_utf8_lossy(&cursor.get_ref()[..clen]));
+
     }
 }

@@ -1,4 +1,5 @@
 extern crate bigint;
+extern crate byteorder;
 extern crate libc;
 extern crate libsodium_sys;
 extern crate rand;
