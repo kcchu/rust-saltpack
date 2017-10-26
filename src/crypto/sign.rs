@@ -127,7 +127,6 @@ mod tests {
     extern crate rustc_serialize;
 
     use error::Error;
-    use rand;
     use self::rustc_serialize::hex::ToHex;
     use super::*;
 

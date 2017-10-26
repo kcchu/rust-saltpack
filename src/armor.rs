@@ -202,9 +202,7 @@ pub struct ArmorReader<'a, R: 'a>
 impl<'a, R> ArmorReader<'a, R>
     where R: io::Read
 {
-    pub fn new(encoding: &'a BaseXEncoding,
-               inner: &'a mut R)
-               -> Result<ArmorReader<'a, R>> {
+    pub fn new(encoding: &'a BaseXEncoding, inner: &'a mut R) -> Result<ArmorReader<'a, R>> {
         let rd = ArmorReader {
             encoding: encoding,
             inner: inner,
@@ -233,7 +231,7 @@ impl<'a, R> ArmorReader<'a, R>
         let mut chunk = [0u8; MAX_ARMORED_BLOCK_SIZE];
         let mut tail = 0;
         while !self.end_of_message && tail < self.encoding.armored_block_size {
-            let len = self.inner.read(&mut chunk[tail..tail+1])?;
+            let len = self.inner.read(&mut chunk[tail..tail + 1])?;
             if len == 0 {
                 // eof
                 break;
@@ -247,7 +245,8 @@ impl<'a, R> ArmorReader<'a, R>
                 }
             }
         }
-        assert!(self.head == self.tail, "only consume a chunk when the buffer is empty");
+        assert!(self.head == self.tail,
+                "only consume a chunk when the buffer is empty");
         self.head = 0; // reset head of the decoded block
         self.tail = self.encoding.decode_block(&chunk[..tail], &mut self.decode_buffer[..])?;
         Ok(self.tail)
@@ -257,7 +256,8 @@ impl<'a, R> ArmorReader<'a, R>
         let mut filled = 0;
         while filled < buf.len() {
             let bytes_to_take = cmp::min(buf.len() - filled, self.tail - self.head);
-            buf[filled..filled + bytes_to_take].copy_from_slice(&self.decode_buffer[self.head..self.head + bytes_to_take]);
+            buf[filled..filled + bytes_to_take]
+                .copy_from_slice(&self.decode_buffer[self.head..self.head + bytes_to_take]);
             filled += bytes_to_take;
             self.head += bytes_to_take;
             if self.head == self.tail {
